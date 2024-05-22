@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Literal
 
+import yaml
+
 from xiaogpt.utils import validate_proxy
 
 LATEST_ASK_API = "https://userprofile.mina.mi.com/device_profile/v2/conversation?source=dialogu&hardware={hardware}&timestamp={timestamp}&limit=2"
@@ -33,20 +35,11 @@ HARDWARE_COMMAND_DICT = {
     # add more here
 }
 
-EDGE_TTS_DICT = {
-    "用英语": "en-US-AriaNeural",
-    "用日语": "ja-JP-NanamiNeural",
-    "用法语": "fr-BE-CharlineNeural",
-    "用韩语": "ko-KR-SunHiNeural",
-    "用德语": "de-AT-JonasNeural",
-    # add more here
-}
-
 DEFAULT_COMMAND = ("5-1", "5-5")
 
 KEY_WORD = ("帮我", "请")
 CHANGE_PROMPT_KEY_WORD = ("更改提示词",)
-PROMPT = "以下请用100字以内回答，请只回答文字不要带链接"
+PROMPT = "以下请用300字以内回答，请只回答文字不要带链接"
 # simulate_xiaoai_question
 MI_ASK_SIMULATE_DATA = {
     "code": 0,
@@ -61,10 +54,18 @@ class Config:
     account: str = os.getenv("MI_USER", "")
     password: str = os.getenv("MI_PASS", "")
     openai_key: str = os.getenv("OPENAI_API_KEY", "")
+    moonshot_api_key: str = os.getenv("MOONSHOT_API_KEY", "")
+    yi_api_key: str = os.getenv("YI_API_KEY", "")
+    llama_api_key: str = os.getenv("GROQ_API_KEY", "")  # use groq
     glm_key: str = os.getenv("CHATGLM_KEY", "")
     gemini_key: str = os.getenv("GEMINI_KEY", "")  # keep the old rule
     qwen_key: str = os.getenv("DASHSCOPE_API_KEY", "")  # keep the old rule
     serpapi_api_key: str = os.getenv("SERPAPI_API_KEY", "")
+    gemini_api_domain: str = os.getenv(
+        "GEMINI_API_DOMAIN", ""
+    )  # 自行部署的 Google Gemini 代理
+    volc_access_key: str = os.getenv("VOLC_ACCESS_KEY", "")
+    volc_secret_key: str = os.getenv("VOLC_SECRET_KEY", "")
     proxy: str | None = None
     mi_did: str = os.getenv("MI_DID", "")
     keyword: Iterable[str] = KEY_WORD
@@ -80,23 +81,15 @@ class Config:
     start_conversation: str = "开始持续对话"
     end_conversation: str = "结束持续对话"
     stream: bool = False
-    tts: Literal["mi", "edge", "azure", "openai"] = "mi"
-    tts_voice: str | None = None
+    tts: Literal[
+        "mi", "edge", "azure", "openai", "baidu", "google", "volc", "minimax"
+    ] = "mi"
+    tts_options: dict[str, Any] = field(default_factory=dict)
     gpt_options: dict[str, Any] = field(default_factory=dict)
-    bing_cookie_path: str = ""
-    bing_cookies: dict | None = None
-    azure_tts_speech_key: str | None = None
-    azure_tts_service_region: str = "eastasia"
 
     def __post_init__(self) -> None:
         if self.proxy:
             validate_proxy(self.proxy)
-        if self.bot == "newbing":
-            if not (self.bing_cookie_path or self.bing_cookies):
-                raise Exception(
-                    "New bing bot needs bing_cookie_path or bing_cookies, read this: "
-                    "https://github.com/acheong08/EdgeGPT#getting-authentication-required"
-                )
         if (
             self.api_base
             and self.api_base.endswith(("openai.azure.com", "openai.azure.com/"))
@@ -111,8 +104,6 @@ class Config:
                 raise Exception(
                     "Using GPT api needs openai API key, please google how to"
                 )
-        if self.tts == "azure" and not self.azure_tts_speech_key:
-            raise Exception("Using Azure TTS needs azure speech key")
 
     @property
     def tts_command(self) -> str:
@@ -130,13 +121,23 @@ class Config:
         for key, value in vars(options).items():
             if value is not None and key in cls.__dataclass_fields__:
                 config[key] = value
+        if config.get("tts") == "volc":
+            config.setdefault("tts_options", {}).setdefault(
+                "access_key", config.get("volc_access_key")
+            )
+            config.setdefault("tts_options", {}).setdefault(
+                "secret_key", config.get("volc_secret_key")
+            )
         return cls(**config)
 
     @classmethod
     def read_from_file(cls, config_path: str) -> dict:
         result = {}
         with open(config_path, "rb") as f:
-            config = json.load(f)
+            if config_path.endswith(".json"):
+                config = json.load(f)
+            else:
+                config = yaml.safe_load(f)
             for key, value in config.items():
                 if value is None:
                     continue
@@ -154,6 +155,14 @@ class Config:
                     key, value = "bot", "gemini"
                 elif key == "use_qwen":
                     key, value = "bot", "qwen"
+                elif key == "use_doubao":
+                    key, value = "bot", "doubao"
+                elif key == "use_moonshot":
+                    key, value = "bot", "moonshot"
+                elif key == "use_yi":
+                    key, value = "bot", "yi"
+                elif key == "use_llama":
+                    key, value = "bot", "llama"
                 elif key == "use_langchain":
                     key, value = "bot", "langchain"
                 elif key == "enable_edge_tts":
