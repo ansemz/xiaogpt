@@ -28,6 +28,21 @@ def main():
         help="openai api key",
     )
     parser.add_argument(
+        "--moonshot_api_key",
+        dest="moonshot_api_key",
+        help="Moonshot api key",
+    )
+    parser.add_argument(
+        "--llama_api_key",
+        dest="llama_api_key",
+        help="llama(use groq) api key",
+    )
+    parser.add_argument(
+        "--yi_api_key",
+        dest="yi_api_key",
+        help="01wanwu api key",
+    )
+    parser.add_argument(
         "--glm_key",
         dest="glm_key",
         help="chatglm api key",
@@ -38,9 +53,24 @@ def main():
         help="gemini api key",
     )
     parser.add_argument(
+        "--gemini_api_domain",
+        dest="gemini_api_domain",
+        help="custom gemini api domain",
+    )
+    parser.add_argument(
         "--qwen_key",
         dest="qwen_key",
         help="Alibaba Qwen api key",
+    )
+    parser.add_argument(
+        "--ppio_api_key",
+        dest="ppio_api_key",
+        help="PPIO api key",
+    )
+    parser.add_argument(
+        "--jiekou_api_key",
+        dest="jiekou_api_key",
+        help="Jiekou AI api key",
     )
     parser.add_argument(
         "--serpapi_api_key",
@@ -79,34 +109,28 @@ def main():
         help="try to mute xiaoai answer",
     )
     parser.add_argument(
+        "--volc_access_key", dest="volc_access_key", help="Volcengine access key"
+    )
+    parser.add_argument(
+        "--volc_secret_key", dest="volc_secret_key", help="Volcengine secret key"
+    )
+    # for fish tts
+    parser.add_argument("--fish_api_key", dest="fish_api_key", help="fish api key")
+    parser.add_argument(
+        "--fish_voice_key", dest="fish_voice_key", help="fish voice key"
+    )
+    parser.add_argument(
         "--verbose",
+        "-v",
         dest="verbose",
-        action="store_true",
-        default=None,
+        action="count",
+        default=0,
         help="show info",
     )
     parser.add_argument(
-        "--azure_tts_speech_key",
-        dest="azure_tts_speech_key",
-        help="if use azure tts",
-    )
-    parser.add_argument(
-        "--azure_tts_service_region",
-        dest="azure_tts_service_region",
-        help="if use azure tts",
-    )
-    tts_group = parser.add_mutually_exclusive_group()
-    tts_group.add_argument(
-        "--enable_edge_tts",
-        dest="tts",
-        action="store_const",
-        const="edge",
-        help="if use edge tts",
-    )
-    tts_group.add_argument(
         "--tts",
-        help="tts type",
-        choices=["mi", "edge", "openai", "azure"],
+        help="TTS provider",
+        choices=["mi", "edge", "openai", "azure", "google", "baidu", "volc", "fish"],
     )
     bot_group = parser.add_mutually_exclusive_group()
     bot_group.add_argument(
@@ -117,18 +141,25 @@ def main():
         help="if use openai chatgpt api",
     )
     bot_group.add_argument(
+        "--use_moonshot_api",
+        dest="bot",
+        action="store_const",
+        const="moonshot",
+        help="if use moonshot api",
+    )
+    bot_group.add_argument(
+        "--use_yi_api",
+        dest="bot",
+        action="store_const",
+        const="yi",
+        help="if use yi api",
+    )
+    bot_group.add_argument(
         "--use_langchain",
         dest="bot",
         action="store_const",
         const="langchain",
         help="if use langchain",
-    )
-    bot_group.add_argument(
-        "--use_newbing",
-        dest="bot",
-        action="store_const",
-        const="newbing",
-        help="if use newbing",
     )
     bot_group.add_argument(
         "--use_glm",
@@ -151,6 +182,34 @@ def main():
         const="gemini",
         help="if use gemini",
     )
+    bot_group.add_argument(
+        "--use_doubao",
+        dest="bot",
+        action="store_const",
+        const="doubao",
+        help="if use doubao",
+    )
+    bot_group.add_argument(
+        "--use_llama",  # use groq
+        dest="bot",
+        action="store_const",
+        const="llama",
+        help="if use groq llama3",
+    )
+    bot_group.add_argument(
+        "--use_ppio",
+        dest="bot",
+        action="store_const",
+        const="ppio",
+        help="if use PPIO api",
+    )
+    bot_group.add_argument(
+        "--use_jiekou",
+        dest="bot",
+        action="store_const",
+        const="jiekou",
+        help="if use Jiekou AI api",
+    )
     parser.add_argument(
         "--bing_cookie_path",
         dest="bing_cookie_path",
@@ -162,11 +221,16 @@ def main():
         help="bot type",
         choices=[
             "chatgptapi",
-            "newbing",
             "glm",
             "gemini",
             "langchain",
             "qwen",
+            "doubao",
+            "moonshot",
+            "yi",
+            "llama",
+            "ppio",
+            "jiekou",
         ],
     )
     parser.add_argument(
@@ -190,9 +254,15 @@ def main():
     options = parser.parse_args()
     config = Config.from_options(options)
 
-    miboy = MiGPT(config)
+    async def main(config: Config) -> None:
+        miboy = MiGPT(config)
+        try:
+            await miboy.run_forever()
+        finally:
+            await miboy.close()
+
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(miboy.run_forever())
+    loop.run_until_complete(main(config))
 
 
 if __name__ == "__main__":

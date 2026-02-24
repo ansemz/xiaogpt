@@ -1,6 +1,6 @@
-from xiaogpt.tts.base import TTS as TTS
-from xiaogpt.tts.edge import EdgeTTS as EdgeTTS
-from xiaogpt.tts.mi import MiTTS as MiTTS
-from xiaogpt.tts.azure import AzureTTS
+from xiaogpt.tts.base import TTS
+from xiaogpt.tts.file import TetosFileTTS
+from xiaogpt.tts.live import TetosLiveTTS
+from xiaogpt.tts.mi import MiTTS
 
-__all__ = ["TTS", "EdgeTTS", "MiTTS", "AzureTTS"]
+__all__ = ["TTS", "TetosFileTTS", "MiTTS", "TetosLiveTTS"]

@@ -23,11 +23,9 @@ from xiaogpt.config import (
     WAKEUP_KEYWORD,
     Config,
 )
-from xiaogpt.tts import TTS, EdgeTTS, MiTTS, AzureTTS
-from xiaogpt.tts.openai import OpenAITTS
-from xiaogpt.utils import (
-    parse_cookie_string,
-)
+from xiaogpt.tts import TTS, MiTTS, TetosFileTTS
+from xiaogpt.tts.live import TetosLiveTTS
+from xiaogpt.utils import detect_language, parse_cookie_string
 
 EOF = object()
 
@@ -40,7 +38,6 @@ class MiGPT:
         self.last_timestamp = int(time.time() * 1000)  # timestamp last call mi speaker
         self.cookie_jar = None
         self.device_id = ""
-        self.parent_id = None
         self.mina_service = None
         self.miio_service = None
         self.in_conversation = False
@@ -53,16 +50,26 @@ class MiGPT:
         self.log.debug(config)
         self.mi_session = ClientSession()
 
+    async def close(self):
+        await self.mi_session.close()
+
     async def poll_latest_ask(self):
         async with ClientSession() as session:
             session._cookie_jar = self.cookie_jar
+            log_polling = int(self.config.verbose) > 1
             while True:
-                self.log.debug(
-                    "Listening new message, timestamp: %s", self.last_timestamp
-                )
+                if log_polling:
+                    self.log.debug(
+                        "Listening new message, timestamp: %s", self.last_timestamp
+                    )
                 new_record = await self.get_latest_ask_from_xiaoai(session)
                 start = time.perf_counter()
-                self.log.debug("Polling_event, timestamp: %s", self.last_timestamp)
+                if log_polling:
+                    self.log.debug(
+                        "Polling_event, timestamp: %s %s",
+                        self.last_timestamp,
+                        new_record,
+                    )
                 await self.polling_event.wait()
                 if (
                     self.config.mute_xiaoai
@@ -72,20 +79,23 @@ class MiGPT:
                     await self.stop_if_xiaoai_is_playing()
                 if (d := time.perf_counter() - start) < 1:
                     # sleep to avoid too many request
-                    self.log.debug("Sleep %f, timestamp: %s", d, self.last_timestamp)
+                    if log_polling:
+                        self.log.debug(
+                            "Sleep %f, timestamp: %s", d, self.last_timestamp
+                        )
                     # if you want force mute xiaoai, comment this line below.
                     await asyncio.sleep(1 - d)
 
-    async def init_all_data(self, session):
-        await self.login_miboy(session)
+    async def init_all_data(self):
+        await self.login_miboy()
         await self._init_data_hardware()
         self.mi_session.cookie_jar.update_cookies(self.get_cookie())
         self.cookie_jar = self.mi_session.cookie_jar
         self.tts  # init tts
 
-    async def login_miboy(self, session):
+    async def login_miboy(self):
         account = MiAccount(
-            session,
+            self.mi_session,
             self.config.account,
             self.config.password,
             str(self.mi_token_home),
@@ -177,7 +187,7 @@ class MiGPT:
         return (
             self.in_conversation
             and not query.startswith(WAKEUP_KEYWORD)
-            or query.startswith(tuple(self.config.keyword))
+            or query.lower().startswith(tuple(w.lower() for w in self.config.keyword))
         )
 
     def need_change_prompt(self, record):
@@ -223,7 +233,7 @@ class MiGPT:
         return None
 
     async def _retry(self):
-        await self.init_all_data(self.mi_session)
+        await self.init_all_data()
 
     def _get_last_query(self, data: dict) -> dict | None:
         if d := data.get("data"):
@@ -256,14 +266,12 @@ class MiGPT:
 
     @functools.cached_property
     def tts(self) -> TTS:
-        if self.config.tts == "edge":
-            return EdgeTTS(self.mina_service, self.device_id, self.config)
-        elif self.config.tts == "azure":
-            return AzureTTS(self.mina_service, self.device_id, self.config)
-        elif self.config.tts == "openai":
-            return OpenAITTS(self.mina_service, self.device_id, self.config)
-        else:
+        if self.config.tts == "mi":
             return MiTTS(self.mina_service, self.device_id, self.config)
+        elif self.config.tts == "fish":
+            return TetosLiveTTS(self.mina_service, self.device_id, self.config)
+        else:
+            return TetosFileTTS(self.mina_service, self.device_id, self.config)
 
     async def wait_for_tts_finish(self):
         while True:
@@ -276,6 +284,7 @@ class MiGPT:
         message = message.strip().replace(" ", "--")
         message = message.replace("\n", "，")
         message = message.replace('"', "，")
+        message = message.replace("*", "")
         return message
 
     async def ask_gpt(self, query: str) -> AsyncIterator[str]:
@@ -332,6 +341,7 @@ class MiGPT:
     async def stop_if_xiaoai_is_playing(self):
         is_playing = await self.get_if_xiaoai_is_playing()
         if is_playing:
+            self.log.debug("Muting xiaoai")
             # stop it
             await self.mina_service.player_pause(self.device_id)
 
@@ -343,19 +353,18 @@ class MiGPT:
         )
 
     async def run_forever(self):
-        await self.init_all_data(self.mi_session)
+        await self.init_all_data()
         task = asyncio.create_task(self.poll_latest_ask())
         assert task is not None  # to keep the reference to task, do not remove this
         print(
-            f"Running xiaogpt now, 用[green]{'/'.join(self.config.keyword)}[/]开头来提问"
+            f"Running xiaogpt now, 用 [green]{'/'.join(self.config.keyword)}[/] 开头来提问"
         )
-        print(f"或用[green]{self.config.start_conversation}[/]开始持续对话")
+        print(f"或用 [green]{self.config.start_conversation}[/] 开始持续对话")
         while True:
             self.polling_event.set()
             new_record = await self.last_record.get()
             self.polling_event.clear()  # stop polling when processing the question
             query = new_record.get("query", "").strip()
-
             if query == self.config.start_conversation:
                 if not self.in_conversation:
                     print("开始对话")
@@ -379,13 +388,18 @@ class MiGPT:
                 self.log.debug("No new xiao ai record")
                 continue
 
-            # drop 帮我回答
+            # drop key words
             query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
+            # llama3 is not good at Chinese, so we need to add prompt in it.
+            if self.config.bot == "llama":
+                query = f"你是一个基于 llama3 的智能助手，请你跟我对话时，一定使用中文，不要夹杂一些英文单词，甚至英语短语也不能随意使用，但类似于 llama3 这样的专属名词除外，问题是：{query}"
 
             print("-" * 20)
             print("问题：" + query + "？")
             if not self.chatbot.has_history():
-                query = f"{query}，{self.config.prompt}"
+                query = f"{query},{self.config.prompt}"
+            # some model can not detect the language code, so we need to add it
+
             if self.config.mute_xiaoai:
                 await self.stop_if_xiaoai_is_playing()
             else:
@@ -394,18 +408,32 @@ class MiGPT:
             await self.do_tts(f"正在问{self.chatbot.name}请耐心等待")
             try:
                 print(
-                    "以下是小爱的回答: ",
+                    "以下是小爱的回答：",
                     new_record.get("answers", [])[0].get("tts", {}).get("text"),
                 )
             except IndexError:
                 print("小爱没回")
-            print(f"以下是 {self.chatbot.name} 的回答: ", end="")
+            print(f"以下是 {self.chatbot.name} 的回答：", end="")
             try:
-                await self.tts.synthesize(query, self.ask_gpt(query))
+                await self.speak(self.ask_gpt(query))
             except Exception as e:
                 print(f"{self.chatbot.name} 回答出错 {str(e)}")
             else:
                 print("回答完毕")
             if self.in_conversation:
-                print(f"继续对话, 或用`{self.config.end_conversation}`结束对话")
+                print(f"继续对话，或用 `{self.config.end_conversation}` 结束对话")
                 await self.wakeup_xiaoai()
+
+    async def speak(self, text_stream: AsyncIterator[str]) -> None:
+        first_chunk = await text_stream.__anext__()
+        # Detect the language from the first chunk
+        # Add suffix '-' because tetos expects it to exist when selecting voices
+        # however, the nation code is never used.
+        lang = detect_language(first_chunk) + "-"
+
+        async def gen():  # reconstruct the generator
+            yield first_chunk
+            async for text in text_stream:
+                yield text
+
+        await self.tts.synthesize(lang, gen())
